@@ -172,41 +172,56 @@ pub async fn build_pieces(
             .unwrap();
         let input_rx = crate::utilization::wrap(Pin::new(input_rx));
 
-        let (output, control) = Fanout::new();
+        let task = match transform {
+            Transform::Function(mut t) => {
+                let (output, control) = Fanout::new();
 
-        let transform = match transform {
-            Transform::Function(mut t) => input_rx
-                .filter(move |event| ready(filter_event_type(event, input_type)))
-                .inspect(|_| emit!(EventIn))
-                .flat_map(move |v| {
-                    let mut buf = Vec::with_capacity(1);
-                    t.transform(&mut buf, v);
-                    emit!(EventOut { count: buf.len() });
-                    stream::iter(buf.into_iter()).map(Ok)
-                })
-                .forward(output)
-                .boxed(),
+                let transform = input_rx
+                    .filter(move |event| ready(filter_event_type(event, input_type)))
+                    .inspect(|_| emit!(EventIn))
+                    .flat_map(move |v| {
+                        let mut buf = Vec::with_capacity(1);
+                        t.transform(&mut buf, v);
+                        emit!(EventOut { count: buf.len() });
+                        stream::iter(buf.into_iter()).map(Ok)
+                    })
+                    .forward(output)
+                    .boxed()
+                    .map_ok(|_| {
+                        debug!("Finished.");
+                        TaskOutput::Transform
+                    });
+
+                outputs.insert(key.clone(), control);
+
+                Task::new(key.clone(), typetag, transform)
+            }
             Transform::Task(t) => {
+                let (output, control) = Fanout::new();
+
                 let filtered = input_rx
                     .filter(move |event| ready(filter_event_type(event, input_type)))
                     .inspect(|_| emit!(EventIn));
-                t.transform(Box::pin(filtered))
+                let transform = t
+                    .transform(Box::pin(filtered))
                     .map(Ok)
                     .forward(output.with(|event| async {
                         emit!(EventOut { count: 1 });
                         Ok(event)
                     }))
                     .boxed()
+                    .map_ok(|_| {
+                        debug!("Finished.");
+                        TaskOutput::Transform
+                    });
+
+                outputs.insert(key.clone(), control);
+
+                Task::new(key.clone(), typetag, transform)
             }
-        }
-        .map_ok(|_| {
-            debug!("Finished.");
-            TaskOutput::Transform
-        });
-        let task = Task::new(key.clone(), typetag, transform);
+        };
 
         inputs.insert(key.clone(), (input_tx, trans_inputs.clone()));
-        outputs.insert(key.clone(), control);
         tasks.insert(key.clone(), task);
     }
 
