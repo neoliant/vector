@@ -8,7 +8,7 @@ license = "MPL-2.0"
 
 [dependencies]
 vrl = { path = "../core" }
-lookup = { path = "../../lookup" }
+lookup_lib = {package = "lookup", path = "../../lookup" }
 datadog-search-syntax = { path = "../../datadog/search-syntax", optional = true }
 
 base64 = { version = "0.13", optional = true }
@@ -60,6 +60,7 @@ default = [
     "decode_base64",
     "decode_percent",
     "del",
+    "lookup",
     "downcase",
     "encode_base64",
     "encode_json",
@@ -78,6 +79,7 @@ default = [
     "get_env_var",
     "get_hostname",
     "includes",
+    "insert",
     "integer",
     "ip_aton",
     "ip_cidr_contains",
@@ -134,6 +136,7 @@ default = [
     "parse_xml",
     "push",
     "redact",
+    "remove",
     "replace",
     "round",
     "sha1",
@@ -175,6 +178,7 @@ contains = []
 decode_base64 = ["base64"]
 decode_percent = ["percent-encoding"]
 del = []
+lookup = []
 downcase = []
 encode_base64 = ["base64"]
 encode_json = ["serde_json"]
@@ -194,6 +198,7 @@ format_timestamp = ["chrono"]
 get_env_var = []
 get_hostname = ["hostname"]
 includes = []
+insert = []
 integer = []
 ip_aton = []
 ip_cidr_contains = ["cidr-utils"]
@@ -250,6 +255,7 @@ parse_user_agent = ["woothee","uaparser","lazy_static"]
 parse_xml = ["roxmltree", "lazy_static", "regex"]
 push = []
 redact = ["lazy_static", "regex"]
+remove = []
 replace = []
 round = []
 sha1 = ["sha-1", "hex"]
