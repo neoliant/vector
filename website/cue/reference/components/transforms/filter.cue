@@ -4,7 +4,8 @@ components: transforms: filter: {
 	title: "Filter"
 
 	description: """
-		Filters events based on a set of conditions.
+		Filters events based on a set of conditions using VRL or
+		[Datadog Search Syntax](\(urls.datadog_search_syntax)).
 		"""
 
 	classes: {
