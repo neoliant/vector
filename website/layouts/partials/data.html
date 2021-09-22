@@ -39,10 +39,9 @@
           {{ end }}
 
           {{ with $v.syntax }}
-          {{ if eq . "vrl_boolean_expression" }}
-          {{ partial "badge.html" (dict "word" . "color" "gray" "href" "/docs/reference/vrl#boolean-expressions") }}
-          {{ else if eq . "remap_program" }}
-          {{ partial "badge.html" (dict "word" . "color" "gray" "href" "/docs/reference/vrl#program") }}
+          {{ if reflect.IsSlice . }}
+          {{ $word := delimit . " | " }}
+          {{ partial "badge.html" (dict "word" $word "color" "gray") }}
           {{ else }}
           {{ partial "badge.html" (dict "word" . "color" "gray") }}
           {{ end }}
@@ -60,10 +59,34 @@
       </div>
 
       {{ range $k, $v := $v.type }}
+      {{ if eq $k "condition" }} {{/* Condition (VRL, etc.) */}}
+      <div class="mt-4 border dark:border-gray-700 rounded">
+        <div class="py-3 px-4">
+          <span class="font-semibold">
+            Syntax
+          </span>
 
+          <div>
+            {{ if reflect.IsSlice $v.syntax }}
+            <table>
+              <thead>
+                <tr>
+                  <th>
+                    Syntax
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
 
-
-      {{ if eq $k "object" }} {{/* Object (with sub-configs) */}}
+              </tbody>
+            </table>
+            {{ else }}
+            {{ $v.syntax }}
+            {{ end }}
+          </div>
+        </div>
+      </div>
+      {{ else if eq $k "object" }} {{/* Object (with sub-configs) */}}
       <div class="mt-4 border dark:border-gray-700 rounded flex flex-col divide-y dark:divide-gray-700">
         {{ range $k, $v := $v.options }}
         <div class="py-3 px-4">
@@ -88,7 +111,12 @@
               {{ end }}
 
               {{ with $v.syntax }}
-              {{ partial "badge.html" (dict "word" $v.syntax "color" "gray") }}
+              {{ if reflect.IsSlice . }}
+              {{ $word := delimit . " | " }}
+              {{ partial "badge.html" (dict "word" $word "color" "gray") }}
+              {{ else }}
+              {{ partial "badge.html" (dict "word" . "color" "gray") }}
+              {{ end }}
               {{ end }}
               {{ end }}
             </span>
