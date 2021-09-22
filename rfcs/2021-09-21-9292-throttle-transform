@@ -1,0 +1,101 @@
+# RFC 9292 - 2021-09-21 - `throttle` transform
+
+In the data sending failures domain we noted the ability to overwhelm a service with large spikes in data volume.
+This is very common with log data. For example, when an application enters an error state and starts logging stack
+traces that significantly increase the log volume. To prevent this, users should have the ability to throttle events
+across a configurable window. Throttling should have the following characteristics:
+
+Threshold - The ability to define a count or byte size threshold for the window.
+Window - A time window that the threshold applies.
+Bucket - A subset of events defined by a condition.
+Behavior - What happens when the threshold is surpassed: apply back pressure or shed load.
+
+## Context
+
+- [#258](https://github.com/vectordotdev/vector/issues/258)
+
+## Scope
+
+### In scope
+
+- Dropping events to rate limit the event stream
+- ...
+- List work being directly addressed with this RFC.
+
+### Out of scope
+
+- Apply backpressure to rate limit the event stream
+- ...
+- List work that is completely out of scope. Use this to keep discussions focused. Please note the "future changes" section at the bottom.
+
+## Pain
+
+- ...
+- What internal or external *pain* are we solving?
+- Do not cover benefits of your change, this is covered in the "Rationale" section.
+
+## Proposal
+
+### User Experience
+
+- ...
+- Explain your change as if you were describing it to a Vector user. We should be able to share this section with a Vector user to solicit feedback.
+- Does this change break backward compatibility? If so, what should users do to upgrade?
+
+### Implementation
+
+- ...
+- Explain your change as if you were presenting it to the Vector team.
+- When possible, demonstrate with psuedo code not text.
+- Be specific. Be opinionated. Avoid ambiguity.
+
+## Rationale
+
+- ...
+- Why is this change worth it?
+- What is the impact of not doing this?
+- How does this position us for success in the future?
+
+## Drawbacks
+
+- ...
+- Why should we not do this?
+- What kind on ongoing burden does this place on the team?
+
+## Prior Art
+
+- [Throttle - FluentBit](https://docs.fluentbit.io/manual/pipeline/filters/throttle)
+- ...
+- List prior art, the good and bad.
+- Why can't we simply use or copy them?
+
+## Alternatives
+
+- Extend `sample` transform to allow for a window configuration
+- ...
+- What other approaches have been considered and why did you not choose them?
+- How about not doing this at all?
+
+## Outstanding Questions
+
+- ...
+- List any remaining questions.
+- Use this to resolve ambiguity and collaborate with your team during the RFC process.
+- *These must be resolved before the RFC can be merged.*
+
+## Plan Of Attack
+
+Incremental steps to execute this change. These will be converted to issues after the RFC is approved:
+
+- [ ] Submit a PR with spike-level code _roughly_ demonstrating the change.
+- [ ] Incremental change #1
+- [ ] Incremental change #2
+- [ ] ...
+
+Note: This can be filled out during the review process.
+
+## Future Improvements
+
+- Throttle by applying backpressure rather than dropping events completely
+- ...
+- List any future improvements. Use this to keep your "plan of attack" scope small and project a sound design.
