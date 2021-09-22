@@ -54,11 +54,14 @@ components: transforms: route: {
 							"""
 						required: true
 						warnings: []
-						type: string: {
-							examples: [
-								#".status_code != 200 && !includes(["info", "debug"], .severity)"#,
-							]
+						type: condition: {
 							syntax: "vrl_boolean_expression"
+							examples: [
+								{
+									syntax: "vrl_boolean_expression"
+									source: #".status_code != 200 && !includes(["info", "debug"], .severity)"#
+								},
+							]
 						}
 					}
 				}

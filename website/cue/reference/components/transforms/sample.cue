@@ -59,12 +59,14 @@ components: transforms: sample: {
 				"""
 			required: false
 			warnings: []
-			type: string: {
-				default: null
-				examples: [
-					#".status_code != 200 && !includes(["info", "debug"], .severity)"#,
-				]
+			type: condition: {
 				syntax: "vrl_boolean_expression"
+				examples: [
+					{
+						syntax: "vrl_boolean_expression"
+						source: #".status_code != 200 && !includes(["info", "debug"], .severity)"#
+					},
+				]
 			}
 		}
 		rate: {

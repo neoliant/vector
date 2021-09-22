@@ -42,11 +42,18 @@ components: transforms: filter: {
 				"""
 			required: true
 			warnings: []
-			type: string: {
+			type: condition: {
+				syntax: ["datadog_search", "vrl_boolean_expression"]
 				examples: [
-					#".status_code != 200 && !includes(["info", "debug"], .severity)"#,
+					{
+						syntax: "vrl_boolean_expression"
+						source: #".status_code != 200 && !includes(["info", "debug"], .severity)"#
+					},
+					{
+						syntax: "datadog_search"
+						source: "@http.status_code:[400 TO 499]"
+					},
 				]
-				syntax: "vrl_boolean_expression"
 			}
 		}
 	}
@@ -67,7 +74,7 @@ components: transforms: filter: {
 		{
 			title: "Drop debug logs"
 			configuration: {
-				condition: #".level == "debug""#
+				condition: #".level != "debug""#
 			}
 			input: [
 				{
@@ -88,6 +95,39 @@ components: transforms: filter: {
 					log: {
 						level:   "info"
 						message: "I'm a normal info log"
+					}
+				},
+			]
+		},
+		{
+			title: "Using Datadog Search syntax"
+			configuration: {
+				condition: {
+					syntax: "datadog_search"
+					source: #"*stack*"#
+				}
+			}
+			input: [
+				{
+					log: {
+						message: "This line won't match..."
+					}
+				},
+				{
+					log: {
+						message: "Needle in a haystack"
+					}
+				},
+				{
+					log: {
+						message: "... and neither will this one"
+					}
+				},
+			]
+			output: [
+				{
+					log: {
+						message: "Needle in a haystack"
 					}
 				},
 			]

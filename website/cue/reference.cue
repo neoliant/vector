@@ -380,7 +380,7 @@ _values: {
 	{"string": #TypeString & {_args: required: Args.required}} |
 	{"timestamp": #TypeTimestamp & {_args: required: Args.required}} |
 	{"uint": #TypeUint & {_args: required: Args.required}} |
-	{"condition": #TypeCondition}
+	{"condition": #TypeCondition & {required: Args.required}}
 }
 
 #TypeArray: {
@@ -471,17 +471,16 @@ _values: {
 }
 
 #TypeCondition: {
-	required: true
-	default: null
+	required: bool
 
 	#ConditionSyntax: "datadog_search" | "vrl_boolean_expression"
 
 	#ConditionExample: {
-		type:    #ConditionSyntax
-		source: != ""
+		syntax: #ConditionSyntax
+		source: !=""
 	}
 
-	syntax:   #ConditionSyntax | [#ConditionSyntax, ...#ConditionSyntax]
+	syntax: #ConditionSyntax | [#ConditionSyntax, ...#ConditionSyntax]
 	examples?: [#ConditionExample, ...#ConditionExample]
 }
 
