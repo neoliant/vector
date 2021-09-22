@@ -379,7 +379,8 @@ _values: {
 	{"object": #TypeObject & {_args: required: Args.required}} |
 	{"string": #TypeString & {_args: required: Args.required}} |
 	{"timestamp": #TypeTimestamp & {_args: required: Args.required}} |
-	{"uint": #TypeUint & {_args: required: Args.required}}
+	{"uint": #TypeUint & {_args: required: Args.required}} |
+	{"condition": #TypeCondition}
 }
 
 #TypeArray: {
@@ -436,6 +437,8 @@ _values: {
 }
 
 #TypeString: {
+	#StringSyntax: *"literal" | "file_system_path" | "field_path" | "template" | "regex" | "remap_program" | "strftime"
+
 	_args: required: bool
 	let Args = _args
 
@@ -464,7 +467,22 @@ _values: {
 		]
 	}
 
-	syntax: "file_system_path" | "field_path" | "literal" | "template" | "regex" | "vrl_boolean_expression" | "remap_program" | "strftime"
+	syntax: #StringSyntax
+}
+
+#TypeCondition: {
+	required: true
+	default: null
+
+	#ConditionSyntax: "datadog_search" | "vrl_boolean_expression"
+
+	#ConditionExample: {
+		type:    #ConditionSyntax
+		source: != ""
+	}
+
+	syntax:   #ConditionSyntax | [#ConditionSyntax, ...#ConditionSyntax]
+	examples?: [#ConditionExample, ...#ConditionExample]
 }
 
 #TypeTimestamp: {
