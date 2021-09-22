@@ -60,32 +60,7 @@
 
       {{ range $k, $v := $v.type }}
       {{ if eq $k "condition" }} {{/* Condition (VRL, etc.) */}}
-      <div class="mt-4 border dark:border-gray-700 rounded">
-        <div class="py-3 px-4">
-          <span class="font-semibold">
-            Syntax
-          </span>
-
-          <div>
-            {{ if reflect.IsSlice $v.syntax }}
-            <table>
-              <thead>
-                <tr>
-                  <th>
-                    Syntax
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-
-              </tbody>
-            </table>
-            {{ else }}
-            {{ $v.syntax }}
-            {{ end }}
-          </div>
-        </div>
-      </div>
+      {{ template "condition" (dict "ctx" $v) }}
       {{ else if eq $k "object" }} {{/* Object (with sub-configs) */}}
       <div class="mt-4 border dark:border-gray-700 rounded flex flex-col divide-y dark:divide-gray-700">
         {{ range $k, $v := $v.options }}
@@ -125,6 +100,13 @@
           <div class="mt-4 prose dark:prose-dark max-w-none leading-snug">
             {{ $v.description | markdownify }}
           </div>
+
+          {{/* Conditions */}}
+          {{ range $k, $v := $v.type }}
+          {{ if eq $k "condition" }}
+          {{ template "condition" (dict "ctx" $v) }}
+          {{ end }}
+          {{ end }}
 
           {{/* "Relevant when" conditions */}}
           {{ with .relevant_when }}
@@ -1912,4 +1894,72 @@
 {{ else }} {{/* If just a plain old string, use Ruby syntax highlighting as a best guess */}}
 {{ highlight . "ruby" "" }}
 {{ end }}
+{{ end }}
+
+{{ define "condition" }}
+{{ $links := dict "vrl_boolean_expression" "/docs/reference/vrl/#boolean-expressions"
+  "datadog_search" "https://docs.datadoghq.com/logs/explorer/search_syntax" }}
+<div class="mt-4 border dark:border-gray-700 rounded space-y-4 divide-y dark:divide-gray-700">
+  <div class="py-3 px-4 prose dark:prose-dark max-w-none">
+    {{ if reflect.IsSlice .ctx.syntax }}
+    <span class="text-lg font-semibold">
+      Available syntaxes
+    </span>
+
+    <p>
+      You can use the following condition syntaxes with this transform:
+    </p>
+
+    <ul>
+      {{ range .ctx.syntax }}
+      {{ $url := index $links . }}
+      <li>
+        <code>
+          {{ . }}
+        </code>.
+
+        For more information on this syntax, see <a href="{{ $url }}">here</a>.
+      </li>
+      {{ end }}
+    </ul>
+
+    {{ else }}
+    {{ $url := index $links .ctx.syntax }}
+    <span class="text-lg font-semibold">
+      Syntax
+    </span>
+
+    <div>
+      <span>
+        This transform uses <code>{{ .ctx.syntax }}</code> syntax. For more information, see
+        <a href="{{ $url }}">here</a>.
+      </span>
+    </div>
+    {{ end }}
+
+    {{ with .ctx.examples }}
+    <div class="mt-4">
+      <span class="text-lg font-semibold">
+        Examples
+      </span>
+
+      <div class="mt-2 border dark:border-gray-700 rounded p-3 flex flex-col space-y-4">
+        {{ range . }}
+        <div>
+          <span>
+            <code>
+              {{ .syntax }}
+            </code>
+          </span>
+
+          <div class="mt-2">
+            {{ highlight .source "ruby" "" }}
+          </div>
+        </div>
+        {{ end }}
+      </div>
+    </div>
+    {{ end }}
+  </div>
+</div>
 {{ end }}
