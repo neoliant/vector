@@ -437,7 +437,7 @@ _values: {
 }
 
 #TypeString: {
-	#StringSyntax: *"literal" | "file_system_path" | "field_path" | "template" | "regex" | "remap_program" | "strftime"
+	#StringSyntax: *"literal" | "file_system_path" | "field_path" | "template" | "regex" | "vrl_program" | "strftime"
 
 	_args: required: bool
 	let Args = _args
