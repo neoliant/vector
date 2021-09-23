@@ -800,7 +800,7 @@
         {{ end }}
 
         {{ with .input.metric }}
-        {{ $json := . | jsonify (dict "indent" " ") }}
+        {{ $json := . | jsonify (dict "indent" "  ") }}
         {{ $code := highlight $json "json" "" }}
         <span>
           Given this <a href="/docs/about/under-the-hood/architecture/data-model/metric">Vector metric event</a>...
@@ -934,7 +934,7 @@
               {{/* Example event (log or metric) */}}
               {{ with .input }}
               {{ with .log }} {{/* Log event */}}
-              {{ $json := . | jsonify (dict "indent" " ") }}
+              {{ $json := . | jsonify (dict "indent" "  ") }}
               <div>
                 <span class="tracking-tighter font-semibold text-sm">
                   Log event
@@ -945,7 +945,7 @@
               {{ end }}
 
               {{ with .metric }} {{/* Metric event */}}
-              {{ $json := . | jsonify (dict "indent" " ") }}
+              {{ $json := . | jsonify (dict "indent" "  ") }}
               <div>
                 <span class="tracking-tighter font-semibold text-sm">
                   Metric event
@@ -1517,7 +1517,7 @@
 
   <div x-show="open" class="mt-3 text-sm flex flex-col space-y-2">
     {{ range .examples }}
-    {{ $json := . | jsonify (dict "indent" " ") }}
+    {{ $json := . | jsonify (dict "indent" "  ") }}
     {{ highlight $json "json" "" }}
     {{ end }}
   </div>
@@ -1525,7 +1525,7 @@
 {{ end }}
 
 {{ define "config-array-examples" }}
-{{ $json := .examples | jsonify (dict "indent" " ") }}
+{{ $json := .examples | jsonify (dict "indent" "") }}
 <div x-data="{ open: false }" class="mt-2.5 border rounded py-2 px-3 dark:border-gray-700">
   <span class="flex justify-between items-center">
     <span class="text-sm">
@@ -1536,7 +1536,7 @@
   </span>
 
   <div x-show="open" class="mt-3 text-sm flex flex-col space-y-2">
-    {{ highlight $json "json" "" }}
+    {{ highlight $json "json" "  " }}
   </div>
 </div>
 {{ end }}
