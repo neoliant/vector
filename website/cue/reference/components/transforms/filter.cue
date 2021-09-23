@@ -44,7 +44,7 @@ components: transforms: filter: {
 			required: true
 			warnings: []
 			type: condition: {
-				syntax: ["datadog_search", "vrl_boolean_expression"]
+				type: ["datadog_search", "vrl_boolean_expression"]
 				examples: [
 					{
 						syntax: "vrl_boolean_expression"
