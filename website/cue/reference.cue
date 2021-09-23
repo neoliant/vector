@@ -473,7 +473,7 @@ _values: {
 #TypeCondition: {
 	required: bool
 
-	#ConditionSyntax: "datadog_search" | "vrl_boolean_expression"
+	#ConditionSyntax: "datadog_search" | "vrl"
 
 	#ConditionExample: {
 		syntax: #ConditionSyntax
