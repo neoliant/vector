@@ -10,6 +10,7 @@ use crate::{
     },
     template::{Template, TemplateParseError},
 };
+use avro_rs::types::Value;
 use futures::{
     channel::oneshot::Canceled, future::BoxFuture, ready, stream::FuturesUnordered, FutureExt,
     Sink, Stream, TryFutureExt,
@@ -17,7 +18,11 @@ use futures::{
 use rdkafka::{
     consumer::{BaseConsumer, Consumer},
     error::{KafkaError, RDKafkaErrorCode},
-    producer::{DeliveryFuture, FutureProducer, FutureRecord},
+    message::{BorrowedMessage, Message},
+    producer::{
+        BaseRecord, DefaultProducerContext, DeliveryFuture, FutureProducer, FutureRecord,
+        ThreadedProducer,
+    },
     ClientConfig,
 };
 use serde::{Deserialize, Serialize};
@@ -32,8 +37,33 @@ use std::{
 use tokio::time::{sleep, Duration};
 use vector_core::event::{Event, EventMetadata, EventStatus};
 
+// Xavier
+use schema_registry_converter::async_impl::easy_avro::EasyAvroEncoder;
+use schema_registry_converter::async_impl::schema_registry::SrSettings;
+use schema_registry_converter::async_impl::schema_registry::get_schema_by_subject;
+use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
+use std::str;
+use tokio::runtime::Handle;
+use std::thread;
+use json::parse;
+use schema_registry_converter::schema_registry_common::{
+    RegisteredReference, RegisteredSchema, SchemaType,
+};
+use schema_registry_converter::error::SRCError;
+use avro_rs::schema::Schema;
+use serde_json::value;
+use serde_json::map::Map;
+use schema_registry_converter::async_impl::schema_registry::get_referenced_schema;
+
 // Maximum number of futures blocked by [send_result](https://docs.rs/rdkafka/0.24.0/rdkafka/producer/future_producer/struct.FutureProducer.html#method.send_result)
 const SEND_RESULT_LIMIT: usize = 5;
+
+#[derive(Clone, Debug)]
+pub(crate) struct AvroSchema {
+    pub(crate) id: u32,
+    pub(crate) raw: String,
+    pub(crate) parsed: Schema,
+}
 
 #[derive(Debug, Snafu)]
 enum BuildError {
@@ -47,8 +77,10 @@ enum BuildError {
 pub struct KafkaSinkConfig {
     bootstrap_servers: String,
     topic: String,
+    errorTopic: String,
     key_field: Option<String>,
     encoding: EncodingConfig<Encoding>,
+    schema_registry_url: String,
     /// These batching options will **not** override librdkafka_options values.
     #[serde(default)]
     batch: BatchConfig,
@@ -72,15 +104,57 @@ fn default_message_timeout_ms() -> u64 {
     300000 // default in librdkafka
 }
 
-#[derive(Clone, Copy, Debug, Derivative, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
+// #[derive(Clone, Copy, Debug, Derivative, Deserialize, Serialize, Eq, PartialEq)]
+// #[serde(rename_all = "snake_case")]
+#[derive(Clone, Debug, Serialize, Deserialize, Derivative, Eq, PartialEq)]
 pub enum Encoding {
     Text,
     Json,
+    Avro,
+    Protobuf,
+}
+
+pub struct RecordProducer {
+    producer: ThreadedProducer<DefaultProducerContext>,
+    avro_encoder: EasyAvroEncoder,
+    schema_registry_url: String,
+}
+
+impl RecordProducer {
+    pub async fn send_avro(
+        &self,
+        key_bytes: &Vec<u8>,
+        values: &Vec<(&'static str, Value)>,
+        topic_name: &String,
+    ) {
+        let subject_name_strategy =
+            SubjectNameStrategy::TopicNameStrategy(topic_name.to_string(), false);
+        let data: Vec<(&'static str, Value)> = Vec::clone(values);
+
+        /*
+        for (k, b) in &data {
+            println!("key: {}.", k);
+            if let Value::String(s) = b {
+                println!("value: {}.", s);
+            }
+            if let Value::Long(l) = b {
+                println!("value: {}.", l);
+            }
+        }
+        */
+
+        let payload = match self.avro_encoder.encode(data, subject_name_strategy).await {
+            Ok(future) => future,
+            Err(e) => panic!("Error getting payload: {}", e),
+        };
+        let br = BaseRecord::to(topic_name).payload(&payload).key(&key_bytes);
+        self.producer.send(br).unwrap();
+    }
 }
 
 pub struct KafkaSink {
-    producer: Arc<FutureProducer<KafkaStatisticsContext>>,
+    // producer: Arc<FutureProducer<KafkaStatisticsContext>>,
+    producer: Arc<RecordProducer>,
     topic: Template,
     key_field: Option<String>,
     encoding: EncodingConfig<Encoding>,
@@ -233,12 +307,38 @@ impl KafkaSinkConfig {
     }
 }
 
+pub fn get_producer(
+    brokers: &str,
+    schema_registry_url: String,
+    message_timeout_ms: u64,
+) -> RecordProducer {
+    let producer: ThreadedProducer<DefaultProducerContext> = ClientConfig::new()
+        .set("bootstrap.servers", brokers)
+        .set("produce.offset.report", "true")
+        .set("message.timeout.ms", message_timeout_ms.to_string())
+        .set("queue.buffering.max.messages", "10")
+        .create()
+        .expect("Producer creation error");
+
+    let sr_settings = SrSettings::new(schema_registry_url.clone());
+    //let sru = schema_registry_url;
+    let avro_encoder = EasyAvroEncoder::new(sr_settings);
+    RecordProducer {
+        producer,
+        avro_encoder,
+        schema_registry_url,
+    }
+}
+
 impl KafkaSink {
     fn new(config: KafkaSinkConfig, acker: Acker) -> crate::Result<Self> {
-        let producer_config = config.to_rdkafka(KafkaRole::Producer)?;
-        let producer = producer_config
-            .create_with_context(KafkaStatisticsContext)
-            .context(KafkaCreateFailed)?;
+        //let producer_config = config.to_rdkafka(KafkaRole::Producer)?;
+        //A remettre en place pour récupérer toutes les options de config
+        let producer = get_producer(
+            &config.bootstrap_servers,
+            config.schema_registry_url,
+            config.message_timeout_ms,
+        );
         Ok(KafkaSink {
             producer: Arc::new(producer),
             topic: Template::try_from(config.topic).context(TopicTemplate)?,
@@ -274,6 +374,27 @@ impl KafkaSink {
         Poll::Ready(())
     }
 }
+/*
+async fn send_record(
+    producer: &RecordProducer,
+    key_bytes: Vec<u8>,
+    // Should be changed to the type
+    values: &Vec<(&'static str, Value)>,
+    topic_name: &String,
+) {
+    producer.send_avro(&key_bytes, values, topic_name).await;
+}
+*/
+
+fn string_to_static_str(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
+}
+
+#[tokio::main]
+async fn get_schema_by_subject_blocking(sr_settings: &SrSettings, subject_name_strategy: &SubjectNameStrategy) -> Result<RegisteredSchema, SRCError> {
+    let v = get_schema_by_subject(&sr_settings, &subject_name_strategy).await;
+        v
+}
 
 impl Sink<Event> for KafkaSink {
     type Error = ();
@@ -299,6 +420,88 @@ impl Sink<Event> for KafkaSink {
             });
         })?;
 
+        // Treat the Event fields in a generic way
+        let mut values: Vec<(&'static str, Value)> = Vec::new();
+        match &item {
+            Event::Log(log) => {
+                let sr_settings = SrSettings::new(self.producer.schema_registry_url.clone());
+                let subject_name_strategy =
+                    SubjectNameStrategy::TopicNameStrategy(self.topic.get_ref().to_string(), false);
+                    let schema = thread::spawn(move || {
+                        let res = get_schema_by_subject_blocking(&sr_settings, &subject_name_strategy);
+                        res
+                    }).join()
+                    .unwrap();
+
+                let avro_schema = String::from(schema.ok().unwrap().schema);
+                let parsed = json::parse(&*avro_schema).unwrap();
+
+                for field in log.all_fields() {
+                    let a = field.0;
+                    let key: &'static str = string_to_static_str(a);
+                    //println!("key: {}", key);
+
+                    let mut schema_field_type = String::from("");
+                    let mut n = 0;
+                    while schema_field_type == "" {
+                        if parsed["fields"][n]["name"].to_string() == key {
+                            schema_field_type = parsed["fields"][n]["type"].to_string();
+                        }
+                        n += 1;
+                    }
+
+                    let b = field.1;
+                    match b {
+                        vector_core::event::Value::Bytes(bytes) => {
+                            let str = std::str::from_utf8(bytes).unwrap();
+                            let val = avro_rs::types::Value::String(str.to_string());
+                            //println!("value: {}", str);
+
+                            values.push((key, val));
+                        }
+                        vector_core::event::Value::Integer(integer) => {
+                            //println!("value: {}", integer);
+                            if schema_field_type == "int" {
+                                let val = Value::Int(i32::try_from(*integer).ok().unwrap());
+                                values.push((key, val));
+                            } else if schema_field_type == "long" {
+                                let val = Value::Long(*integer);
+                                values.push((key, val));
+                            } else if schema_field_type == "float" {
+                                let val = Value::Float(*integer as f32);
+                                values.push((key, val));
+                            } else if schema_field_type == "double" {
+                                let val = Value::Double(*integer as f64);
+                                values.push((key, val));
+                            }
+                        }
+                        vector_core::event::Value::Array(array) => println!("array"),
+                        vector_core::event::Value::Boolean(boolean) => {
+                            //println!("value: {}", boolean);
+                            if schema_field_type == "boolean" {
+                                let val = Value::Boolean(*boolean);
+                                values.push((key, val));
+                            }
+                        }
+                        vector_core::event::Value::Float(fl) => {
+                            //println!("value: {}", fl);
+                            if schema_field_type == "float" {
+                                let val = Value::Float(*fl as f32);
+                                values.push((key, val));
+                            } else if  schema_field_type == "double" {
+                                let val = Value::Double(*fl);
+                                values.push((key, val));
+                            }
+                        }
+                        vector_core::event::Value::Map(map) => println!("map"),
+                        vector_core::event::Value::Null => println!("null"),
+                        vector_core::event::Value::Timestamp(ts) => println!("timestamp"),
+                    }
+                }
+            }
+            _ => (),
+        };
+
         let timestamp_ms = match &item {
             Event::Log(log) => log
                 .get(log_schema().timestamp_key())
@@ -314,6 +517,13 @@ impl Sink<Event> for KafkaSink {
 
         let producer = Arc::clone(&self.producer);
         let kf = self.key_field.is_some();
+
+        let handle = Handle::current();
+        handle.spawn(async move {
+            producer.send_avro(&key, &values, &topic).await;
+        });
+
+        /*
         self.delivery_fut.push(Box::pin(async move {
             let mut record = if kf {
                 FutureRecord::to(&topic).key(&key).payload(&body[..])
@@ -344,6 +554,7 @@ impl Sink<Event> for KafkaSink {
 
             (seqno, result, metadata)
         }));
+        */
 
         Ok(())
     }
@@ -442,6 +653,14 @@ fn encode_event(
 
     let body = match &event {
         Event::Log(log) => match encoding.codec() {
+            Encoding::Avro => log
+                .get(log_schema().message_key())
+                .map(|v| v.as_bytes().to_vec())
+                .unwrap_or_default(),
+            Encoding::Protobuf => log
+                .get(log_schema().message_key())
+                .map(|v| v.as_bytes().to_vec())
+                .unwrap_or_default(),
             Encoding::Json => serde_json::to_vec(&log).unwrap(),
             Encoding::Text => log
                 .get(log_schema().message_key())
@@ -449,6 +668,8 @@ fn encode_event(
                 .unwrap_or_default(),
         },
         Event::Metric(metric) => match encoding.codec() {
+            Encoding::Avro => metric.to_string().into_bytes(),
+            Encoding::Protobuf => metric.to_string().into_bytes(),
             Encoding::Json => serde_json::to_vec(&metric).unwrap(),
             Encoding::Text => metric.to_string().into_bytes(),
         },
