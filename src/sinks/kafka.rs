@@ -38,22 +38,25 @@ use tokio::time::{sleep, Duration};
 use vector_core::event::{Event, EventMetadata, EventStatus};
 
 // Xavier
-use schema_registry_converter::async_impl::easy_avro::EasyAvroEncoder;
-use schema_registry_converter::async_impl::schema_registry::SrSettings;
-use schema_registry_converter::async_impl::schema_registry::get_schema_by_subject;
-use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
-use std::str;
-use tokio::runtime::Handle;
-use std::thread;
+use avro_rs::schema::Schema;
 use json::parse;
+use schema_registry_converter::async_impl::easy_avro::EasyAvroEncoder;
+use schema_registry_converter::async_impl::schema_registry::get_referenced_schema;
+use schema_registry_converter::async_impl::schema_registry::get_schema_by_subject;
+use schema_registry_converter::async_impl::schema_registry::SrSettings;
+use schema_registry_converter::error::SRCError;
+use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
 use schema_registry_converter::schema_registry_common::{
     RegisteredReference, RegisteredSchema, SchemaType,
 };
-use schema_registry_converter::error::SRCError;
-use avro_rs::schema::Schema;
-use serde_json::value;
 use serde_json::map::Map;
-use schema_registry_converter::async_impl::schema_registry::get_referenced_schema;
+use serde_json::value;
+use std::str;
+use std::thread;
+use tokio::runtime::Handle;
+use uuid::Uuid;
+use std::time::{SystemTime, UNIX_EPOCH};
+use std::convert::TryInto;
 
 // Maximum number of futures blocked by [send_result](https://docs.rs/rdkafka/0.24.0/rdkafka/producer/future_producer/struct.FutureProducer.html#method.send_result)
 const SEND_RESULT_LIMIT: usize = 5;
@@ -77,7 +80,7 @@ enum BuildError {
 pub struct KafkaSinkConfig {
     bootstrap_servers: String,
     topic: String,
-    errorTopic: String,
+    error_topic: String,
     key_field: Option<String>,
     encoding: EncodingConfig<Encoding>,
     schema_registry_url: String,
@@ -132,6 +135,7 @@ impl RecordProducer {
         let data: Vec<(&'static str, Value)> = Vec::clone(values);
 
         /*
+        println!("topic: {}", topic_name);
         for (k, b) in &data {
             println!("key: {}.", k);
             if let Value::String(s) = b {
@@ -156,6 +160,7 @@ pub struct KafkaSink {
     // producer: Arc<FutureProducer<KafkaStatisticsContext>>,
     producer: Arc<RecordProducer>,
     topic: Template,
+    error_topic: Template,
     key_field: Option<String>,
     encoding: EncodingConfig<Encoding>,
     delivery_fut: FuturesUnordered<
@@ -342,6 +347,7 @@ impl KafkaSink {
         Ok(KafkaSink {
             producer: Arc::new(producer),
             topic: Template::try_from(config.topic).context(TopicTemplate)?,
+            error_topic: Template::try_from(config.error_topic).context(TopicTemplate)?,
             key_field: config.key_field,
             encoding: config.encoding,
             delivery_fut: FuturesUnordered::new(),
@@ -390,10 +396,95 @@ fn string_to_static_str(s: String) -> &'static str {
     Box::leak(s.into_boxed_str())
 }
 
+fn load_values_with_single_json_string_and_error_message(
+    item: Event,
+    vector_field_type: String,
+    schema_field_type: String,
+    field_name: String,
+    topic_name: String,
+) -> Vec<(&'static str, Value)> {
+    let mut values: Vec<(&'static str, Value)> = Vec::new();
+
+    let mut original_data = json::JsonValue::new_object();
+    match &item {
+        Event::Log(log) => {
+            for field in log.all_fields() {
+                let mut stringified_data = String::new();
+                match field.1 {
+                    vector_core::event::Value::Bytes(bytes) => {
+                        let str = std::str::from_utf8(bytes).unwrap();
+                        stringified_data = str.to_string();
+                    },
+                    vector_core::event::Value::Boolean(boolean) => {
+                        stringified_data = boolean.to_string();
+                    },
+                    vector_core::event::Value::Array(array) => {
+
+                    },
+                    vector_core::event::Value::Float(float) => {
+                        stringified_data = float.to_string();
+                    },
+                    vector_core::event::Value::Integer(integer) => {
+                        stringified_data = integer.to_string();
+                    },
+                    vector_core::event::Value::Map(map) => {
+
+                    },
+                    vector_core::event::Value::Null => {
+                        stringified_data = String::from("");
+                    },
+                    vector_core::event::Value::Timestamp(timestamp) => {
+                        stringified_data = timestamp.to_string();
+                    },
+                    _ => (),
+                };
+                original_data[string_to_static_str(field.0)] = string_to_static_str(stringified_data).into();
+            };
+        },
+        _ => (),
+    };
+    values.push(("originalEvent", avro_rs::types::Value::String(original_data.dump())));
+
+    //TODO : A composer avec les paramètres de la fonction
+    let mut error_message = String::from("Schema awaited a ");
+    error_message.push_str(&schema_field_type.to_string());
+    error_message.push_str(" for field ");
+    error_message.push_str(&field_name.to_string());
+    error_message.push_str(" on topic ");
+    error_message.push_str(&topic_name.to_string());
+    error_message.push_str(". Instead, it received a ");
+    error_message.push_str(&vector_field_type.to_string());
+    error_message.push_str(" from Vector.");
+    println!("Error : {}", error_message);
+    values.push(("errorMessage", avro_rs::types::Value::String(error_message)));
+
+    values.push(("uuid", avro_rs::types::Value::String(Uuid::new_v4()
+        .to_hyphenated()
+        .to_string()
+    )));
+
+    values.push(("utcTimestamp", avro_rs::types::Value::Long(SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .unwrap()
+        .as_micros()
+        .try_into()
+        .unwrap()
+    )));
+
+    values.push(("namespace", avro_rs::types::Value::String(String::from("siemens.vicos.vda2"))));
+    values.push(("subSystemName", avro_rs::types::Value::String(String::from("VDA2"))));
+
+    values
+}
+
 #[tokio::main]
-async fn get_schema_by_subject_blocking(sr_settings: &SrSettings, subject_name_strategy: &SubjectNameStrategy) -> Result<RegisteredSchema, SRCError> {
+async fn get_schema_by_subject_blocking(
+    sr_settings: &SrSettings,
+    subject_name_strategy: &SubjectNameStrategy,
+) -> Result<RegisteredSchema, SRCError> {
     let v = get_schema_by_subject(&sr_settings, &subject_name_strategy).await;
-        v
+    v
 }
 
 impl Sink<Event> for KafkaSink {
@@ -420,6 +511,21 @@ impl Sink<Event> for KafkaSink {
             });
         })?;
 
+        let error_topic = self.error_topic.render_string(&item).map_err(|error| {
+            emit!(TemplateRenderingFailed {
+                error,
+                field: Some("error_topic"),
+                drop_event: true,
+            });
+        })?;
+
+        let seqno = self.seq_head;
+        self.seq_head += 1;
+
+        let producer = Arc::clone(&self.producer);
+
+        let handle = Handle::current();
+
         // Treat the Event fields in a generic way
         let mut values: Vec<(&'static str, Value)> = Vec::new();
         match &item {
@@ -427,11 +533,12 @@ impl Sink<Event> for KafkaSink {
                 let sr_settings = SrSettings::new(self.producer.schema_registry_url.clone());
                 let subject_name_strategy =
                     SubjectNameStrategy::TopicNameStrategy(self.topic.get_ref().to_string(), false);
-                    let schema = thread::spawn(move || {
-                        let res = get_schema_by_subject_blocking(&sr_settings, &subject_name_strategy);
-                        res
-                    }).join()
-                    .unwrap();
+                let schema = thread::spawn(move || {
+                    let res = get_schema_by_subject_blocking(&sr_settings, &subject_name_strategy);
+                    res
+                })
+                .join()
+                .unwrap();
 
                 let avro_schema = String::from(schema.ok().unwrap().schema);
                 let parsed = json::parse(&*avro_schema).unwrap();
@@ -477,18 +584,138 @@ impl Sink<Event> for KafkaSink {
                         }
                         vector_core::event::Value::Array(array) => println!("array"),
                         vector_core::event::Value::Boolean(boolean) => {
-                            //println!("value: {}", boolean);
-                            if schema_field_type == "boolean" {
-                                let val = Value::Boolean(*boolean);
-                                values.push((key, val));
+                            match schema_field_type.as_str() {
+                                "null" => {
+                                    load_values_with_single_json_string_and_error_message(
+                                        item.clone(),
+                                        String::from("boolean"),
+                                        schema_field_type.clone(),
+                                        key.to_string(),
+                                        topic.clone(),
+                                    );
+                                }
+                                "boolean" => {
+                                    let val = Value::Boolean(*boolean);
+                                    values.push((key, val));
+                                }
+                                "int" => {
+                                    let val = Value::Int(*boolean as i32);
+                                    values.push((key, val));
+                                }
+                                "long" => {
+                                    let val = Value::Long(*boolean as i64);
+                                    values.push((key, val));
+                                }
+                                "float" => {
+                                    if *boolean == true {
+                                        let val = Value::Float(1.0);
+                                        values.push((key, val));
+                                    } else {
+                                        let val = Value::Float(0.0);
+                                        values.push((key, val));
+                                    }
+                                }
+                                "double" => {
+                                    if *boolean == true {
+                                        let val = Value::Double(1.0);
+                                        values.push((key, val));
+                                    } else {
+                                        let val = Value::Double(0.0);
+                                        values.push((key, val));
+                                    }
+                                }
+                                "string" => {
+                                    if *boolean == true {
+                                        let val =
+                                            avro_rs::types::Value::String(String::from("true"));
+                                        values.push((key, val));
+                                    } else {
+                                        let val =
+                                            avro_rs::types::Value::String(String::from("false"));
+                                        values.push((key, val));
+                                    }
+                                }
+                                "bytes" => {
+                                    load_values_with_single_json_string_and_error_message(
+                                        item.clone(),
+                                        String::from("boolean"),
+                                        schema_field_type.clone(),
+                                        key.to_string(),
+                                        topic.clone(),
+                                    );
+                                }
+                                _ => {}
                             }
                         }
                         vector_core::event::Value::Float(fl) => {
-                            //println!("value: {}", fl);
+                            match schema_field_type.as_str() {
+                                "null" => {
+                                    load_values_with_single_json_string_and_error_message(
+                                        item.clone(),
+                                        String::from("float"),
+                                        schema_field_type.clone(),
+                                        key.to_string(),
+                                        topic.clone(),
+                                    );
+                                }
+                                "boolean" => {
+                                    if *fl == 0.0 {
+                                        let val = Value::Boolean(false);
+                                        values.push((key, val));
+                                    } else if *fl == 1.0 {
+                                        let val = Value::Boolean(true);
+                                        values.push((key, val));
+                                    } else {
+                                        let error_event = load_values_with_single_json_string_and_error_message(
+                                            item.clone(),
+                                            String::from("float"),
+                                            schema_field_type.clone(),
+                                            key.to_string(),
+                                            topic.clone(),
+                                        );
+                                        let (keym, body, metadata) = encode_event(item.clone(), &self.key_field, &self.encoding);
+                                        handle.spawn(async move {
+                                            producer.send_avro(&keym, &error_event, &error_topic).await;
+                                        });
+                                        return Ok(())
+                                    }
+                                }
+                                "int" => {
+                                    let val = Value::Int(*fl as i32);
+                                    values.push((key, val));
+                                }
+                                "long" => {
+                                    let val = Value::Long(*fl as i64);
+                                    values.push((key, val));
+                                }
+                                "float" => {
+                                    let val = Value::Float(*fl as f32);
+                                    values.push((key, val));
+                                }
+                                "double" => {
+                                    let val = Value::Double(*fl as f64);
+                                    values.push((key, val));
+                                }
+                                "string" => {
+                                    let s = format!("{}", *fl);
+                                    let val = avro_rs::types::Value::String(s);
+                                    values.push((key, val));
+                                }
+                                "bytes" => {
+                                    load_values_with_single_json_string_and_error_message(
+                                        item.clone(),
+                                        String::from("float"),
+                                        schema_field_type.clone(),
+                                        key.to_string(),
+                                        topic.clone(),
+                                    );
+                                }
+                                _ => {}
+                            }
                             if schema_field_type == "float" {
                                 let val = Value::Float(*fl as f32);
                                 values.push((key, val));
-                            } else if  schema_field_type == "double" {
+                            } else if schema_field_type == "double" {
                                 let val = Value::Double(*fl);
                                 values.push((key, val));
                             }
@@ -502,6 +729,7 @@ impl Sink<Event> for KafkaSink {
             _ => (),
         };
 
+        /*
         let timestamp_ms = match &item {
             Event::Log(log) => log
                 .get(log_schema().timestamp_key())
@@ -510,19 +738,15 @@ impl Sink<Event> for KafkaSink {
             Event::Metric(metric) => metric.timestamp(),
         }
         .map(|ts| ts.timestamp_millis());
-        let (key, body, metadata) = encode_event(item, &self.key_field, &self.encoding);
 
-        let seqno = self.seq_head;
-        self.seq_head += 1;
-
-        let producer = Arc::clone(&self.producer);
         let kf = self.key_field.is_some();
-
-        let handle = Handle::current();
+        */
+        let (key, body, metadata) = encode_event(item, &self.key_field, &self.encoding);
         handle.spawn(async move {
             producer.send_avro(&key, &values, &topic).await;
         });
-
+        
+        
         /*
         self.delivery_fut.push(Box::pin(async move {
             let mut record = if kf {
@@ -863,9 +1087,11 @@ mod integration_test {
         librdkafka_options: HashMap<String, String>,
     ) -> crate::Result<KafkaSink> {
         let topic = format!("test-{}", random_string(10));
+        let error_topic = format!("test-error-{}", random_string(10));
         let config = KafkaSinkConfig {
             bootstrap_servers: "localhost:9091".to_string(),
             topic: format!("{}-%Y%m%d", topic),
+            error_topic: format!("{}-%Y%m%d", error_topic),
             compression: KafkaCompression::None,
             encoding: Encoding::Text.into(),
             key_field: None,
